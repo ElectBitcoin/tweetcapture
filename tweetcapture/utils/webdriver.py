@@ -18,10 +18,9 @@ async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0
     chrome_options.add_argument("--disable-logging")
     chrome_options.add_argument('--ignore-certificate-errors')
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument(f"--window-size={ceil(1024*scale)},{ceil(1024*scale)}")
+    chrome_options.add_argument(f"--window-size={ceil(1280*scale)},{ceil(2048*scale)}")
     chrome_options.add_argument("--remote-debugging-port=9222")
-    chrome_options.add_argument("--incognito")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
     if isinstance(custom_options, list) and len(custom_options) > 0:
         for option in custom_options:

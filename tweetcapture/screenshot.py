@@ -125,18 +125,25 @@ class TweetCapture:
                 if width == 0:
                     raise Exception("Tweet element has zero width — the page may not have rendered correctly")
                 need_crop = scale != 1.0
-                if scale != 1.0:
-                    driver.save_screenshot(path)
-                else:
-                    el.screenshot(path)
-                    # element.screenshot() can silently produce no file when Chrome's CDP
-                    # element-capture fails (oversized container, specific render states, etc.)
-                    # Fall back to full-page save + PIL crop in that case.
-                    if not exists(path) or getsize(path) == 0:
-                        driver.save_screenshot(path)
+                # Capture PNG bytes explicitly so any error surfaces immediately
+                # rather than being swallowed by Selenium's silent return-False wrappers.
+                try:
+                    png = el.screenshot_as_png if scale == 1.0 else driver.get_screenshot_as_png()
+                except Exception as e:
+                    raise Exception(f"Chrome screenshot failed: {type(e).__name__}: {e}")
+                if not png:
+                    try:
+                        png = driver.get_screenshot_as_png()
                         need_crop = True
-                if not exists(path) or getsize(path) == 0:
-                    raise Exception("Screenshot file was not written — Chrome may have silently failed")
+                    except Exception as e:
+                        raise Exception(f"Chrome full-page screenshot also failed: {type(e).__name__}: {e}")
+                if not png:
+                    raise Exception("Chrome returned empty screenshot data — page may not have rendered")
+                try:
+                    with open(path, 'wb') as f:
+                        f.write(png)
+                except OSError as e:
+                    raise Exception(f"Could not write screenshot to '{path}': {e}")
                 if radius > 0 or need_crop:
                     im = Image.open(path)
                     if need_crop:

@@ -203,22 +203,36 @@ class TweetCapture:
     def __init_scale_css(self, driver):
         driver.execute_script("""
             var style = document.createElement('style');
-            style.innerHTML = ".r-1ye8kvj { max-width: 40rem !important; } .r-rthrr5 { width: 100% !important; } body { scale: """+str(self.scale)+""" !important; transform-origin: 0 0 !important; }";
+            style.innerHTML = "[data-testid='primaryColumn'] { max-width: 40rem !important; } [data-testid='cellInnerDiv'] { width: 100% !important; } body { scale: """+str(self.scale)+""" !important; transform-origin: 0 0 !important; }";
             document.head.appendChild(style);
         """)
 
     def __hide_global_items(self, driver):
-        HIDE_ITEMS_XPATH = [
-            '/html/body/div/div/div/div[1]',
-            '/html/body/div/div/div/div[2]/header', '/html/body/div/div/div/div[2]/main/div/div/div/div/div/div[1]',
-            ".//ancestor::div[@data-testid = 'tweetButtonInline']/../../../../../../../../../../.."
+        # Use stable data-testid / semantic selectors instead of fragile absolute XPaths.
+        # Absolute XPaths break whenever Twitter adds or removes a wrapper div, and a wrong
+        # match can hide the tweet container itself (causing the 0-width screenshot error).
+        HIDE_CSS_SELECTORS = [
+            'header',
+            '[data-testid="SideNav"]',
+            '[data-testid="sidebarColumn"]',
+            'nav[aria-label="Primary"]',
         ]
-        for item in HIDE_ITEMS_XPATH:
+        for selector in HIDE_CSS_SELECTORS:
             try:
-                element = driver.find_element(By.XPATH, item)
-                driver.execute_script("""
-                arguments[0].style.display="none";
-                """, element)
+                els = driver.find_elements(By.CSS_SELECTOR, selector)
+                for el in els:
+                    driver.execute_script("arguments[0].style.display='none';", el)
+            except:
+                continue
+        # Hide the inline compose-tweet row if present
+        for xpath in [
+            "//div[@data-testid='tweetButtonInline']/ancestor::div[@data-testid='ScrollSnap-List']",
+            "//div[@data-testid='tweetButtonInline']/../../../..",
+        ]:
+            try:
+                el = driver.find_element(By.XPATH, xpath)
+                driver.execute_script("arguments[0].style.display='none';", el)
+                break
             except:
                 continue
 
@@ -379,8 +393,8 @@ class TweetCapture:
         for element in els:
             if len(element.find_elements(By.XPATH, ".//article[contains(@data-testid, 'tweet')]")) > 0:
                 source = element.get_attribute("innerHTML")
-                # sponsored tweet pass
-                if source.find("M19.498 3h-15c-1.381 0-2.5 1.12-2.5 2.5v13c0 1.38") != -1 or source.find('css-1dbjc4n r-1s2bzr4" id="id__jrl5cg7nxl"') != -1:
+                # sponsored tweet pass (SVG path for the "Promoted" badge icon)
+                if source.find("M19.498 3h-15c-1.381 0-2.5 1.12-2.5 2.5v13c0 1.38") != -1:
                     continue
                 elements.append(element)
         length = len(elements)
@@ -389,11 +403,34 @@ class TweetCapture:
                 return elements, 0
             else:
                 main_element = -1
-                for i, element in enumerate(elements):
-                    main_tweet_details = element.find_elements(By.XPATH, ".//div[contains(@class, 'r-1471scf')]")
-                    if len(main_tweet_details) == 1:
-                        main_element = i
-                        break
+
+                # Primary: match the tweet whose timestamp link points to the URL's tweet ID.
+                # This is robust against CSS class changes; Twitter's generated class names
+                # (e.g. r-1471scf) rotate with every frontend deploy.
+                try:
+                    current_url = driver.current_url
+                    if '/status/' in current_url:
+                        tweet_id = current_url.split('/status/')[-1].split('?')[0].split('/')[0]
+                        for i, element in enumerate(elements):
+                            # The timestamp <a> wraps a <time> element and links to the tweet's own URL
+                            links = element.find_elements(
+                                By.XPATH,
+                                ".//time/ancestor::a[contains(@href, '/status/" + tweet_id + "')]"
+                            )
+                            if len(links) > 0:
+                                main_element = i
+                                break
+                except:
+                    pass
+
+                # Fallback: legacy generated-class detection (may stop working after Twitter deploys)
+                if main_element == -1:
+                    for i, element in enumerate(elements):
+                        main_tweet_details = element.find_elements(By.XPATH, ".//div[contains(@class, 'r-1471scf')]")
+                        if len(main_tweet_details) == 1:
+                            main_element = i
+                            break
+
                 if main_element == -1:
                     return [], -1
                 else:
@@ -403,7 +440,7 @@ class TweetCapture:
                     if parent_tweets_limit > 0 and len(elements[s1:main_element]) > parent_tweets_limit:
                         s1 = main_element - parent_tweets_limit
                     if show_parents and show_mentions_count > 0:
-                        if len(elements[r:]) > show_mentions_count:      
+                        if len(elements[r:]) > show_mentions_count:
                             return (elements[s1:r] + elements[r:r2]), main_element
                         return elements[s1:], main_element
                     elif show_parents:

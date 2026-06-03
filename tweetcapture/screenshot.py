@@ -89,24 +89,38 @@ class TweetCapture:
             elements, main = self.__get_tweets(driver, self.show_parent_tweets if show_parent_tweets is None else show_parent_tweets, self.parent_tweets_limit if parent_tweets_limit is None else parent_tweets_limit, self.show_mentions_count if show_mentions_count is None else show_mentions_count)
             if len(elements) == 0:
                 raise Exception("Tweets not found")
-            else:
-                for i, element in enumerate(elements):
-                    if i == main:
-                        self.__code_main_footer_items_new(element, self.mode if mode is None else mode)
-                    else:
-                        try:
-                            driver.execute_script(self.__code_footer_items(self.mode if mode is None else mode), element.find_element(By.XPATH, ".//div[@role = 'group']"), element.find_element(By.CSS_SELECTOR, ".r-1hdv0qi:first-of-type"))
-                        except:
-                            pass
-                    
-                    self.__hide_media(element, self.hide_link_previews, self.hide_photos, self.hide_videos, self.hide_gifs, self.hide_quotes)
-                    if i == len(elements)-1:
-                        self.__margin_tweet(self.mode if mode is None else mode, element)
-                        
+            # Detect "Tweet unavailable" / deleted / suspended articles before
+            # attempting a screenshot that will silently fail.
+            for element in elements:
+                inner = element.get_attribute("innerHTML") or ""
+                if ("unavailable" in inner.lower() or "suspended" in inner.lower()):
+                    if not element.find_elements(By.XPATH, ".//*[@data-testid='tweetText']"):
+                        raise Exception("Tweet is unavailable or has been deleted")
+            # Verify Chrome is still responsive before attempting screenshot
+            try:
+                driver.current_url
+            except Exception:
+                raise Exception("Chrome session lost — likely crashed while rendering the tweet")
+            for i, element in enumerate(elements):
+                if i == main:
+                    self.__code_main_footer_items_new(element, self.mode if mode is None else mode)
+                else:
+                    try:
+                        driver.execute_script(self.__code_footer_items(self.mode if mode is None else mode), element.find_element(By.XPATH, ".//div[@role = 'group']"), element.find_element(By.CSS_SELECTOR, ".r-1hdv0qi:first-of-type"))
+                    except:
+                        pass
+
+                self.__hide_media(element, self.hide_link_previews, self.hide_photos, self.hide_videos, self.hide_gifs, self.hide_quotes)
+                if i == len(elements)-1:
+                    self.__margin_tweet(self.mode if mode is None else mode, element)
+
+            # Let the browser settle after DOM manipulation before screenshotting
+            await sleep(1.5)
+
             if len(elements) == 1:
                 el = self.__resolve_screenshot_element(elements[0], driver)
                 driver.execute_script("arguments[0].scrollIntoView(true);", el)
-                await sleep(0.2)
+                await sleep(1.0)
                 x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", el)
                 if width == 0:
                     raise Exception("Tweet element has zero width — the page may not have rendered correctly")
@@ -517,14 +531,19 @@ class TweetCapture:
         except Exception:
             pass
 
-        # Last resort: walk up to the nearest ancestor with non-zero width
+        # Last resort: walk up, but stop before body/html and cap width at 800px
+        # to avoid returning a full-page container that Chrome can't capture.
         try:
             el = element
             for _ in range(10):
                 el = driver.execute_script("return arguments[0].parentElement;", el)
                 if el is None:
                     break
-                if width_of(el) > 0:
+                tag = driver.execute_script("return arguments[0].tagName;", el)
+                if tag and tag.lower() in ('body', 'html'):
+                    break
+                w = width_of(el)
+                if 0 < w <= 800:
                     return el
         except Exception:
             pass

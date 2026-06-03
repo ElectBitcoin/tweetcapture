@@ -5,7 +5,7 @@ from selenium.webdriver.common.by import By
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 from os import remove, environ
-from os.path import exists
+from os.path import exists, getsize
 
 class TweetCapture:
     driver = None
@@ -105,12 +105,17 @@ class TweetCapture:
                         
             if len(elements) == 1:
                 driver.execute_script("window.scrollTo(0, 0);")
-                x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", elements[0])
+                el = self.__resolve_screenshot_element(elements[0], driver)
+                x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", el)
+                if width == 0:
+                    raise Exception("Tweet element has zero width — the page may not have rendered correctly")
                 await sleep(0.1)
                 if scale != 1.0:
                     driver.save_screenshot(path)
                 else:
-                    elements[0].screenshot(path)
+                    el.screenshot(path)
+                if not exists(path) or getsize(path) == 0:
+                    raise Exception("Screenshot file was not written — Chrome may have silently failed")
                 if radius > 0 or scale != 1.0:
                     im = Image.open(path)
                     if scale != 1.0:
@@ -124,7 +129,8 @@ class TweetCapture:
                 for element in elements:
                     filename = "tmp_%s_tweetcapture.png" % element.id
                     driver.execute_script("arguments[0].scrollIntoView();", element)
-                    x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", element)
+                    el = self.__resolve_screenshot_element(element, driver)
+                    x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", el)
                     await sleep(0.1)
                     if scale != 1.0:
                         driver.save_screenshot(filename)
@@ -133,7 +139,7 @@ class TweetCapture:
                         im.save(filename)
                         im.close()
                     else:
-                        element.screenshot(filename)
+                        el.screenshot(filename)
                     filenames.append(filename)
                 width = 0
                 height = 0
@@ -456,5 +462,58 @@ class TweetCapture:
                         return elements[main_element:r], 0
         return [], -1
     
+    def __resolve_screenshot_element(self, element, driver):
+        """
+        Twitter wraps article elements in divs that can have display:contents or no
+        computed dimensions, making element.screenshot() silently produce an empty file.
+        Walk up the DOM until we find an ancestor with a real bounding rect, preferring
+        the cellInnerDiv container that Twitter uses for timeline tweets.
+        """
+        def width_of(el):
+            try:
+                return driver.execute_script(
+                    "return arguments[0].getBoundingClientRect().width;", el)
+            except Exception:
+                return 0
+
+        if width_of(element) > 0:
+            return element
+
+        # Prefer the cellInnerDiv ancestor — it's Twitter's stable tweet card wrapper
+        try:
+            cell = driver.execute_script(
+                "var el = arguments[0];"
+                "while (el && !(el.getAttribute && el.getAttribute('data-testid') === 'cellInnerDiv'))"
+                "  el = el.parentElement;"
+                "return el;",
+                element
+            )
+            if cell and width_of(cell) > 0:
+                return cell
+        except Exception:
+            pass
+
+        # Fall back to the article element directly
+        try:
+            articles = element.find_elements(By.XPATH, ".//article[@data-testid='tweet']")
+            if articles and width_of(articles[0]) > 0:
+                return articles[0]
+        except Exception:
+            pass
+
+        # Last resort: walk up to the nearest ancestor with non-zero width
+        try:
+            el = element
+            for _ in range(10):
+                el = driver.execute_script("return arguments[0].parentElement;", el)
+                if el is None:
+                    break
+                if width_of(el) > 0:
+                    return el
+        except Exception:
+            pass
+
+        return element
+
     def set_gui(self, gui):
         self.gui = True if gui is True else False

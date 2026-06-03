@@ -104,22 +104,29 @@ class TweetCapture:
                         self.__margin_tweet(self.mode if mode is None else mode, element)
                         
             if len(elements) == 1:
-                driver.execute_script("window.scrollTo(0, 0);")
                 el = self.__resolve_screenshot_element(elements[0], driver)
+                driver.execute_script("arguments[0].scrollIntoView(true);", el)
+                await sleep(0.2)
                 x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", el)
                 if width == 0:
                     raise Exception("Tweet element has zero width — the page may not have rendered correctly")
-                await sleep(0.1)
+                need_crop = scale != 1.0
                 if scale != 1.0:
                     driver.save_screenshot(path)
                 else:
                     el.screenshot(path)
+                    # element.screenshot() can silently produce no file when Chrome's CDP
+                    # element-capture fails (oversized container, specific render states, etc.)
+                    # Fall back to full-page save + PIL crop in that case.
+                    if not exists(path) or getsize(path) == 0:
+                        driver.save_screenshot(path)
+                        need_crop = True
                 if not exists(path) or getsize(path) == 0:
                     raise Exception("Screenshot file was not written — Chrome may have silently failed")
-                if radius > 0 or scale != 1.0:
+                if radius > 0 or need_crop:
                     im = Image.open(path)
-                    if scale != 1.0:
-                        im = im.crop((x, y, x+width, y+height))
+                    if need_crop:
+                        im = im.crop((int(x), int(y), int(x + width), int(y + height)))
                     if radius > 0:
                         im = add_corners(im, radius)
                     im.save(path)
@@ -128,18 +135,27 @@ class TweetCapture:
                 filenames = []
                 for element in elements:
                     filename = "tmp_%s_tweetcapture.png" % element.id
-                    driver.execute_script("arguments[0].scrollIntoView();", element)
                     el = self.__resolve_screenshot_element(element, driver)
-                    x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", el)
+                    driver.execute_script("arguments[0].scrollIntoView(true);", el)
                     await sleep(0.1)
+                    x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", el)
+                    need_crop = scale != 1.0
                     if scale != 1.0:
                         driver.save_screenshot(filename)
                         im = Image.open(filename)
-                        im = im.crop((x, y, x+width, y+height))
+                        im = im.crop((int(x), int(y), int(x + width), int(y + height)))
                         im.save(filename)
                         im.close()
                     else:
                         el.screenshot(filename)
+                        if not exists(filename) or getsize(filename) == 0:
+                            driver.save_screenshot(filename)
+                            need_crop = True
+                        if need_crop:
+                            im = Image.open(filename)
+                            im = im.crop((int(x), int(y), int(x + width), int(y + height)))
+                            im.save(filename)
+                            im.close()
                     filenames.append(filename)
                 width = 0
                 height = 0

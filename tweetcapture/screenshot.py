@@ -279,6 +279,28 @@ class TweetCapture:
             except:
                 continue
 
+        # Hide the tweet-detail-page "← Post" sticky navigation bar.
+        # X.com renders this as a <div> (not <header>), so the CSS selector above misses it.
+        # Find it via its stable back-button testid and walk up to the sticky ancestor.
+        try:
+            driver.execute_script("""
+                var backBtn = document.querySelector("[data-testid='app-bar-back']");
+                if (backBtn) {
+                    var el = backBtn;
+                    for (var i = 0; i < 10; i++) {
+                        el = el.parentElement;
+                        if (!el || el === document.body) break;
+                        var pos = window.getComputedStyle(el).position;
+                        if (pos === 'sticky' || pos === 'fixed') {
+                            el.style.display = 'none';
+                            break;
+                        }
+                    }
+                }
+            """)
+        except:
+            pass
+
     def __margin_tweet(self, mode, base):
         if mode == 0:
             try:
